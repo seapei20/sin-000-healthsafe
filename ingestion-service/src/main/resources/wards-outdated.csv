@@ -1,19 +1,21 @@
-ward_id, Wing ,department,beds_available
-W-01, East Wing ,Cardiology,3
-w-02,West Wing,paediatrics,N/A
-W-03 ,east wing,Cardiology,0
-W-04,North Wing,Oncology,-1
-W-05,East Wing,Paediatrics,5
-w-05,east wing ,PAEDIATRICS,five
-W-06,South Wing,Radiology,2
-W-07,West Wing,cardiology,TBD
-W-08,,Oncology,4
-W-09,North Wing,ICU,N/A
-W-10,South  Wing,Maternity,1
-W-11,East Wing,Pediatrics,3
-w-12,west wing,Cardiology,full
-W-13,North Wing,Oncology,2023
-W-14,South Wing,radiology,-2
-W-15,East Wing,ICU,unknown
-W-16,West Wing ,Maternity,0
-w-17,North wing,oncology,6
+ward_id, Wing ,department,beds_available,status,last_updated,special_unit
+W-01, East Wing ,Cardiology,3,Active,2024-03-05,Y
+w-02,West Wing,paediatrics,N/A,active,3/5/2024,no
+W-03 ,east wing,Cardiology,0,ACTIVE,05-03-2024,1
+W-04,North Wing,Oncology,-1,Inactive,2024-13-05,true
+W-05,East Wing,Paediatrics,5,Active,5/3/2024,FALSE
+w-05,east wing ,PAEDIATRICS,five,active,03/15/2024,yes
+W-06,South Wing,Radiology,2,Pending,N/A,0
+W-07,West Wing,cardiology,TBD,active,2024-02-30,Y
+W-08,,Oncology,4,unknown,1/2/2024,-
+W-09,North Wing,ICU,N/A,Active,31-12-2023,n
+W-10,South  Wing,Maternity,1,ACTIVE,2024-04-17,true
+W-11,East Wing,Pediatrics,3,active,17/04/2024,Y
+w-12,west wing,Cardiology,full,Active,TBD,yes
+W-13,North Wing,Oncology,2023,Inactive,4-7-2024,0
+W-14,South Wing,radiology,-2,active,2024-06-01,unknown
+W-15,East Wing,ICU,unknown,Active,06/01/2024,N
+W-16,West Wing ,Maternity,0,pending,1/13/2024,1
+w-17,North wing,oncology,6,Active,2023-12-31,no
+,East Wing,Cardiology,3,Active,2024-03-01,Y
+unknown,West Wing,ICU,2,Closed,2024-03-02,N
