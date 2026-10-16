@@ -28,13 +28,63 @@ cleanup through synchronous REST calls to asynchronous MQ decoupling and alertin
 Plus [`common/`](common) (no port) — the shared ActiveMQ broker and MQ config notes
 for `staffing-events-topic`: Staffing updates are broadcast as Events via the broker to decouple the frontend from the Staffing Service.
 
-**Status:** scaffold only — build files, Javalin bootstrap, and TODOs are in place; no
-business logic has been implemented yet.
+**Status:** all four stages implemented — stages 1–2 (the required core) plus both
+stretch stages 3–4. Each module builds and runs independently; 32 unit tests cover
+the cleaning rules, the status scale, the rota maths and id canonicalisation.
+
+## What's implemented
+
+### Stage 1 — Ingestion (`ingestion-service`, port 7030)
+
+`WardCleaner` reads `wards-outdated.csv` once at startup and normalises it:
+
+- ids/`Wing`/`department` casing and padding (`w-05,east wing ,PAEDIATRICS` → `W-05`, `East Wing`, `Paediatrics`, including `Pediatrics` → `Paediatrics`)
+- dates in `YYYY-MM-DD`, `MM/DD/YYYY` and `DD-MM-YYYY` → ISO-8601; impossible dates rejected (see the date-reading assumptions in [ingestion-service/README.md](ingestion-service/README.md))
+- placeholders (`N/A`, `TBD`, `-`, `unknown`, blank) → `null`
+- non-numeric / negative / unrealistic bed counts → `null` + a note, never a crash
+- `Y/N`, `yes/no`, `1/0`, `true/FALSE` → real booleans
+- duplicate ids written two ways (`W-05` / `w-05`) merged first-wins, with the conflicts recorded in `notes`
+- rows that cannot be identified are rejected with a reason and reported, not served and not fatal
+
+Endpoints: `GET /wards`, `GET /wards/{id}` (404), `GET /departments`, `GET /report`.
+
+### Stage 2 — REST services
+
+- **ward-service** (7031) copies the cleaned wards from ingestion-service in the background (so it still boots, and answers 503 with a reason, while ingestion is down).
+- **alert-level-service** (7032) tracks Emergency Status 0–8; `PUT /alert-level` rejects anything outside the range or non-integer with 400 rather than clamping.
+- **staffing-service** (7033) computes an on-call rota from ward + current status, calling ward-service and alert-level-service synchronously and mapping every downstream failure to an honest 404/502/503.
+
+### Stage 3 — MQ decoupling (stretch)
+
+staffing-service broadcasts every computed schedule to `staffing-events-topic`;
+ward-service subscribes and serves `GET /wards/{id}/staffing` from that cache
+(`"source": "mq"`). A synchronous call to staffing-service remains only as the
+cold-cache fallback (`"source": "rest"`), so the response labels which path was
+taken. `GET /staffing-events` shows everything received.
+
+### Stage 4 — Alerting (stretch)
+
+`POST /wards/{id}/equipment-failures` publishes a persistent message to
+`equipment-failure-queue` (202 when queued, **503 when the broker is down** — an
+alert is never silently dropped); equipment-alert-service consumes it with client
+acknowledgement and redelivery, and exposes the result at `GET /alerts`.
+
+| Endpoint | Service | Notes |
+|---|---|---|
+| `GET /wards` · `/wards/{id}` · `/departments` · `/report` | ingestion 7030 | cleaned data + what was fixed/rejected |
+| `GET /wards` · `/wards/{id}` · `/departments` · `POST /wards/refresh` | ward 7031 | 503 until ingestion data arrives |
+| `GET /wards/{id}/staffing` · `POST .../staffing/refresh` · `GET /staffing-events` | ward 7031 | topic cache first, REST fallback |
+| `POST /wards/{id}/equipment-failures` | ward 7031 | → `equipment-failure-queue` |
+| `GET`/`PUT`/`POST /alert-level` · `GET /alert-level/history` | alert-level 7032 | validated 0–8 |
+| `GET /staffing?wardId=W-01` · `GET /staffing/{wardId}` | staffing 7033 | calls ward + alert-level over HTTP |
+| `GET /alerts` · `GET /alerts/count` | equipment-alert 7034 | consumed with guaranteed delivery |
 
 ## Your task
 
 Each stage below builds on the last — do them in order. Every service already builds
-and runs (`/health` returns `OK`); your job is to fill in the `TODO`s.
+and runs (`/health` returns `OK`). *This brief is kept as the record of the
+exercise; all four stages below are implemented — see
+[What's implemented](#whats-implemented) for what ended up in the code.*
 
 1. **Ingestion** (required) — in `IngestionServiceApp`, read and clean
    `wards-outdated.csv` (see [ingestion-service/README.md](ingestion-service/README.md)
@@ -58,8 +108,8 @@ when to reach for a queue/topic instead of a direct call. There's no fixed time
 limit, but budget your effort so you have a working stage 1-2 before spending time
 on 3-4 — a complete core beats a half-done everything.
 
-Automated tests aren't required, but are a good way to show your work — see each
-service's `## Test` section for how to add JUnit 5.
+Automated tests aren't required, but are a good way to show your work — each
+service's `## Test` section lists what is covered and how to run it.
 
 ## Integration contracts
 
@@ -81,6 +131,7 @@ consume them.
 ```
 healthsafe/
 ├── README.md
+├── pom.xml                     (aggregator: builds all modules)
 ├── .gitignore
 ├── ingestion-service/          (port 7030)
 │   ├── pom.xml
@@ -102,8 +153,10 @@ healthsafe/
 Requirements: Java 17+, Maven 3.8+, Docker (for the broker in `common/`).
 
 Every folder here (`ingestion-service/`, each domain service, and `equipment-alert-service/`) is
-an **independent** Maven project — there is no parent/aggregator pom. Build one at a
-time, e.g.:
+an **independent** Maven project. A root aggregator `pom.xml` simply lists them as
+modules so the whole repo can be built in one pass from the project root (the
+services themselves have no parent and remain independently buildable). Build one
+at a time, e.g.:
 
 ```
 cd ward-service
@@ -113,7 +166,7 @@ mvn package
 ...or build every module in the repo in one pass from the project root:
 
 ```
-find . -name pom.xml -execdir mvn -q package \;
+mvn -q package
 ```
 
 ## Run
@@ -147,34 +200,21 @@ cd equipment-alert-service && mvn package && java -jar target/equipment-alert-se
 
 ## Test
 
-No automated tests exist yet (this is a scaffold). Each running service exposes
-`/health`, so sanity-check manually:
+Each running service exposes `/health`, so sanity-check manually:
 
 ```
 curl http://localhost:7030/health   # -> OK
 ```
 
-To add real tests to a module, add JUnit 5 and Surefire to its `pom.xml`:
-
-```xml
-<dependency>
-  <groupId>org.junit.jupiter</groupId>
-  <artifactId>junit-jupiter</artifactId>
-  <version>5.10.2</version>
-  <scope>test</scope>
-</dependency>
-```
-
-```xml
-<plugin>
-  <groupId>org.apache.maven.plugins</groupId>
-  <artifactId>maven-surefire-plugin</artifactId>
-  <version>3.2.5</version>
-</plugin>
-```
-
-then add tests under that module's `src/test/java/...` and run:
+Unit tests (JUnit 5 + Surefire) exist for the parts that are pure functions —
+`WardCleanerTest` (18 tests, the whole cleaning ruleset plus malformed-row
+robustness), `AlertLevelServiceTest`, `ScheduleCalculatorTest`,
+`WardStoreTest` — 32 in total:
 
 ```
-mvn test
+mvn -q test
 ```
+
+The service-to-service and broker behaviour is deliberately left to a running
+stack; check it with the calls in [What's implemented](#whats-implemented) after
+bringing up the five services and `common/docker-compose.yml`.

@@ -34,7 +34,12 @@ the *kind* of transform expected, not a fixed schema to match exactly):
 
 Note this row is also a near-duplicate of `W-05` two rows above it (same real ward,
 different ID casing and field values) — deciding how to merge or flag duplicates
-like this is part of the exercise.
+like this is part of the exercise. In the shipped fixture the earlier `W-05` row
+is the one that survives the merge (`bedsAvailable: 5`, first-seen wins), and this
+row's own problem is preserved in `notes` as
+`duplicate row issue: bedsAvailable was non-numeric ('five') — flagged for follow-up`,
+so nothing is silently thrown away. Check it live with
+`curl localhost:7030/wards/W-05`.
 
 ## Known data issues
 
@@ -58,14 +63,55 @@ out for (and handle) at least:
 - **Naming/spelling variants** for the same thing (e.g. regional spelling
   differences, synonyms)
 
+### Fixture note
+
+The original 18-row export only contained the first four columns, so it had no
+status, date or flag values to clean even though the list above (and the rubric)
+calls for them. The `status`, `last_updated` and `special_unit` columns have been
+appended with deliberately messy values, plus two rows at the end whose `ward_id`
+cannot be identified. **Every original cell is byte-for-byte unchanged**, so the
+original problem rows still behave exactly as they did; the cleaner also still
+works against a plain 4-column copy of the file (optional columns are read if
+present and ignored if not).
+
+## Cleaning decisions
+
+Where the data is ambiguous, the choice was made explicitly rather than guessed:
+
+- **Duplicates merge first-wins** — the first row for a canonical id is the base;
+  missing fields are filled from later duplicates, conflicts keep the first-seen
+  value. Every merge and conflict lands in `notes`.
+- **Untrusted values become `null`**, never `0`/`false`, and always with a note
+  saying why (`bedsAvailable was non-numeric ('five') — flagged for follow-up`).
+- **Date ambiguity**: `-` separated dates are read day-first (`05-03-2024` →
+  5 March), `/` separated dates month-first (`3/5/2024` → 5 March), matching the
+  formats listed above. If the preferred reading is impossible (`17/04/2024`),
+  the other reading is tried before the value is rejected.
+- **Bad rows never abort the parse** — a row without a usable ward id is rejected
+  with its line number and reason and reported by `GET /report`.
+
+## Endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/health` | liveness (`OK`) |
+| GET | `/wards` | the cleaned records ward-service consumes |
+| GET | `/wards/{id}` | one ward, case/format tolerant (`w-5` works); 404 if unknown |
+| GET | `/departments` | distinct departments, sorted |
+| GET | `/report` | rows read, wards cleaned, duplicates merged, and every rejected row with its reason |
+
 ## Project structure
 
 ```
 ingestion-service/
 ├── pom.xml
-└── src/main/
-    ├── java/co/wethinkcode/healthsafe/IngestionServiceApp.java
-    └── resources/wards-outdated.csv
+├── src/main/
+│   ├── java/co/wethinkcode/healthsafe/
+│   │   ├── IngestionServiceApp.java     (Javalin bootstrap + routes)
+│   │   ├── WardCleaner.java             (parse + normalise + merge duplicates)
+│   │   └── WardRecord.java              (one cleaned ward)
+│   └── resources/wards-outdated.csv
+└── src/test/java/co/wethinkcode/healthsafe/WardCleanerTest.java
 ```
 
 ## Build
@@ -80,16 +126,23 @@ mvn package
 java -jar target/ingestion-service.jar
 ```
 
-Listens on port `7030`. Currently just exposes `/health` — the actual CSV
-parsing/cleaning logic is a TODO.
+Listens on port `7030`. The CSV is parsed once at startup; `GET /wards` serves the
+result.
 
 ## Test
 
-No automated tests yet. Manually verify it's up:
+18 JUnit tests in `src/test/java/co/wethinkcode/healthsafe/WardCleanerTest.java`
+cover the worked example, duplicate merging, casing/padding, numeric, date, boolean
+and status normalisation, and the robustness requirement (malformed rows are
+rejected without taking down the parse):
+
+```
+mvn test
+```
+
+Manually verify it's up:
 
 ```
 curl http://localhost:7030/health   # -> OK
+curl http://localhost:7030/report   # -> what was cleaned, merged and rejected
 ```
-
-To add real tests, add JUnit 5 + the Surefire plugin to `pom.xml`, put tests under
-`src/test/java/co/wethinkcode/healthsafe/`, and run `mvn test`.

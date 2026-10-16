@@ -53,12 +53,25 @@ from their own directories at the project root).
 docker compose ps          # confirm the broker container is healthy
 ```
 
-Once the TODOs below are implemented, verify end-to-end by publishing a message from
-`staffing-service` and confirming the consumer(s) receive it — e.g. via logs, or by
-watching the topic in the web console.
+Verify end-to-end by computing a schedule and confirming the subscriber picks it up:
 
-## TODO
+```
+curl 'http://localhost:7033/staffing?wardId=W-01'   # publishes to the topic
+curl http://localhost:7031/staffing-events          # ward-service received it
+curl http://localhost:7031/wards/W-01/staffing      # -> "source": "mq"
+```
 
-- Add `activemq-client` publish logic to `staffing-service` on its stage/state-change endpoint.
-- Add `activemq-client` subscriber logic to consumer service(s) above, replacing any
-  direct synchronous calls to `staffing-service`.
+The web console at http://localhost:8161 shows `staffing-events-topic` and
+`equipment-failure-queue` while they are in use.
+
+## Why a topic here, and a queue over there
+
+| | `staffing-events-topic` | `equipment-failure-queue` |
+|---|---|---|
+| Producer | staffing-service | ward-service |
+| Consumers | ward-service (and anything else that wants to watch) | equipment-alert-service, exactly one |
+| Semantics | broadcast, fire-and-forget — a schedule is recomputable by asking staffing-service again | guaranteed, at-least-once — a lost failure alert is unacceptable |
+| Subscriber | plain (non-durable) subscription | client acknowledgement + redelivery |
+
+Both are wired: `StaffingEventPublisher`/`StaffingEventsSubscriber` on the topic,
+`EquipmentFailurePublisher`/`EquipmentFailureConsumer` on the queue.
