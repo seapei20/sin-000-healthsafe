@@ -20,10 +20,33 @@ in the root README for the endpoint shapes.
 staffing-service/
 ├── pom.xml
 └── src/main/java/co/wethinkcode/healthsafe/
-    ├── StaffingServiceApp.java
+    ├── StaffingServiceApp.java     (routes + the two synchronous calls)
+    ├── ScheduleCalculator.java     (pure ward + status -> rota logic)
+    ├── StaffingEventPublisher.java (topic producer)
+    ├── HttpJson.java               (service-to-service HTTP helper)
     └── mq/
         └── MqConfig.java
 ```
+
+## Endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/health` | liveness (`OK`) |
+| GET | `/staffing?wardId=W-01` | on-call rota for that ward at the current Emergency Status |
+| GET | `/staffing/{wardId}` | same, path form |
+
+Each request validates the ward against ward-service, reads the level from
+alert-level-service, computes the rota, then broadcasts it on
+`staffing-events-topic`. Downstream failures are mapped rather than assumed:
+
+| Situation | Status |
+|---|---|
+| unknown ward | 404 |
+| ward-service / alert-level-service unreachable | 503 with the reason |
+| a dependency is up but has no data yet / cannot reach *its* dependencies | 503 |
+| a dependency returned something unusable | 502 |
+| broker down | still **200** — the schedule is served, `eventPublished: false` explains the missing broadcast |
 
 ## Build
 
@@ -41,11 +64,19 @@ Listens on port `7033`.
 
 ## Test
 
-No automated tests yet. Manually verify it's up:
+8 JUnit tests in `src/test/java/co/wethinkcode/healthsafe/ScheduleCalculatorTest.java`
+cover head count vs status, that every shift is covered at any level, that
+shortfalls are flagged, determinism, and the escalation messages:
 
 ```
-curl http://localhost:7033/health   # -> OK
+mvn test
 ```
 
-To add real tests, add JUnit 5 + the Surefire plugin to `pom.xml`, put tests under
-`src/test/java/co/wethinkcode/healthsafe/`, and run `mvn test`.
+Manually verify (alert-level and ward-service must be up):
+
+```
+curl http://localhost:7033/health                          # -> OK
+curl 'http://localhost:7033/staffing?wardId=W-01'          # -> rota, eventPublished: true
+curl 'http://localhost:7033/staffing?wardId=W-99'          # -> 404
+curl 'http://localhost:7033/staffing'                      # -> 400 missing wardId
+```
