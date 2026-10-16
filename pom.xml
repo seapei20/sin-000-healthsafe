@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>co.wethinkcode.healthsafe</groupId>
+  <artifactId>healthsafe</artifactId>
+  <version>1.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+
+  <name>HealthSafe</name>
+  <description>Aggregator for the independent HealthSafe services.</description>
+
+  <modules>
+    <module>ingestion-service</module>
+    <module>ward-service</module>
+    <module>alert-level-service</module>
+    <module>staffing-service</module>
+    <module>equipment-alert-service</module>
+  </modules>
+</project>
