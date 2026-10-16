@@ -31,10 +31,20 @@ where every subscriber gets every message.
 equipment-alert-service/
 ├── pom.xml
 └── src/main/java/co/wethinkcode/healthsafe/
-    ├── EquipmentAlertServiceApp.java
+    ├── EquipmentAlertServiceApp.java (Javalin routes)
+    ├── EquipmentFailureConsumer.java (queue consumer with guaranteed delivery)
+    ├── HttpJson.java                 (JSON helper)
     └── mq/
         └── MqConfig.java
 ```
+
+## Endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/health` | liveness (`OK`) — answers even with no broker running |
+| GET | `/alerts` | every alert handled so far, each stamped with `receivedAt` |
+| GET | `/alerts/count` | queue name, broker URL, and how many alerts were handled |
 
 ## Build
 
@@ -52,11 +62,22 @@ Listens on port `7034`.
 
 ## Test
 
-No automated tests yet. Manually verify it's up:
+No unit tests here — the interesting behaviour is the delivery guarantee, which
+needs a real broker. Verify it by taking the consumer *out* of the equation:
 
 ```
-curl http://localhost:7034/health   # -> OK
+# 1. stop this service, then publish two alerts from ward-service
+#    (both still return 202 — the queue holds them):
+curl -X POST -H 'Content-Type: application/json' \
+     -d '{"equipment":"Defibrillator","fault":"battery fault"}' \
+     http://localhost:7031/wards/W-05/equipment-failures
+
+# 2. restart this service and watch the held alerts arrive:
+curl http://localhost:7034/alerts/count
+curl http://localhost:7034/alerts
 ```
 
-To add real tests, add JUnit 5 + the Surefire plugin to `pom.xml`, put tests under
-`src/test/java/co/wethinkcode/healthsafe/`, and run `mvn test`.
+With the broker stopped instead, ward-service answers **503 "alert NOT queued"**
+rather than pretending an alert was delivered. Also worth watching the log for a
+failed handle being redelivered (`session.recover()`), and the ActiveMQ console at
+http://localhost:8161 for the queue itself.
